@@ -349,7 +349,8 @@ def build_drag_editor_html(bg_b64, overlays_json, canvas_w, canvas_h):
       }}
       var infoInner = activeEl.querySelector('.info-inner');
       if (infoInner) {{
-        var infoFs = Math.max(8, Math.min(18, Math.min(nh * 0.09, nw * 0.05)));
+        // 横幅だけで文字サイズを決定（縦は無視）
+        var infoFs = Math.max(8, Math.min(18, nw * 0.05));
         infoInner.style.fontSize = infoFs + 'px';
         infoInner.style.lineHeight = (infoFs * 1.5) + 'px';
       }}
@@ -360,6 +361,21 @@ def build_drag_editor_html(bg_b64, overlays_json, canvas_w, canvas_h):
 
   overlayData.forEach(function(ov) {{
     wrap.appendChild(createOverlayEl(ov));
+  }});
+
+  // info-box の高さをテキスト内容に自動フィット（下の余白をなくす）
+  overlayData.forEach(function(ov) {{
+    if (ov.type === 'info') {{
+      var el = document.getElementById(ov.id);
+      var inner = el ? el.querySelector('.info-inner') : null;
+      if (inner) {{
+        // scrollHeightでテキスト実際の高さを取得してボックスを縮める
+        var realH = inner.scrollHeight + 4;  // +4はborderの分
+        if (realH < el.offsetHeight) {{
+          el.style.height = realH + 'px';
+        }}
+      }}
+    }}
   }});
 
   /* ===== Canvas描画で最終画像を生成 → ダウンロード ===== */
@@ -462,12 +478,12 @@ def build_drag_editor_html(bg_b64, overlays_json, canvas_w, canvas_h):
         ctx.lineWidth = 1;
         ctx.stroke();
 
-        // テキスト描画（自動折り返し・ボックスサイズ連動）
+        // テキスト描画（自動折り返し・横幅で文字サイズ連動）
         var padding = 8;
         var textX = x + padding;
         var textY = y + padding;
         var maxTextW = w - padding * 2;
-        var infoFs = Math.max(8, Math.min(18, Math.min(h * 0.09, w * 0.05)));
+        var infoFs = Math.max(8, Math.min(18, w * 0.05));
         var lineH = Math.round(infoFs * 1.5);
         var infoText = ov.text || '';
         ctx.fillStyle = 'black';
