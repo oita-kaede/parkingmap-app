@@ -56,13 +56,68 @@ def draw_yellow_label(image, target_x, target_y, label_text, font_size=36):
     return image
 
 
-def draw_info_box(image, info_text, box_x, box_y, box_w, box_h, font_size=28):
-    draw = ImageDraw.Draw(image)
-    try:
-        font = ImageFont.truetype("ipaexg.ttf", font_size)
-    except:
-        font = ImageFont.load_default()
+def wrap_text_to_box(text, font, max_width, draw):
+    """テキストをbox幅に合わせて自動改行する"""
+    wrapped_lines = []
+    for line in text.strip().split('\n'):
+        if not line:
+            wrapped_lines.append('')
+            continue
+        # 1行ずつ幅をチェックして折り返す
+        current = ''
+        for char in line:
+            test = current + char
+            bb = draw.textbbox((0, 0), test, font=font)
+            if (bb[2] - bb[0]) > max_width:
+                if current:
+                    wrapped_lines.append(current)
+                current = char
+            else:
+                current = test
+        if current:
+            wrapped_lines.append(current)
+    return wrapped_lines
 
+
+def calc_text_height(lines, font, draw, line_spacing=6):
+    """折り返し済みテキストの合計高さを計算"""
+    total = 0
+    for line in lines:
+        if not line:
+            total += line_spacing
+            continue
+        bb = draw.textbbox((0, 0), line, font=font)
+        total += (bb[3] - bb[1]) + line_spacing
+    return total
+
+
+def draw_info_box(image, info_text, box_x, box_y, box_w, box_h, font_size=14):
+    """枠に合わせてフォントサイズ自動調整 + 自動改行する情報欄"""
+    draw = ImageDraw.Draw(image)
+    padding = 8
+    inner_w = box_w - padding * 2
+    inner_h = box_h - padding * 2
+    line_spacing = 5
+
+    # フォントサイズを自動調整（枠に収まるまで小さくする）
+    for fs in range(font_size, 7, -1):
+        try:
+            font = ImageFont.truetype("ipaexg.ttf", fs)
+        except:
+            font = ImageFont.load_default()
+            break
+        wrapped = wrap_text_to_box(info_text, font, inner_w, draw)
+        total_h = calc_text_height(wrapped, font, draw, line_spacing)
+        if total_h <= inner_h:
+            break
+    else:
+        try:
+            font = ImageFont.truetype("ipaexg.ttf", 8)
+        except:
+            font = ImageFont.load_default()
+        wrapped = wrap_text_to_box(info_text, font, inner_w, draw)
+
+    # 半透明の白背景
     overlay = Image.new('RGBA', image.size, (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
     overlay_draw.rounded_rectangle(
@@ -71,17 +126,21 @@ def draw_info_box(image, info_text, box_x, box_y, box_w, box_h, font_size=28):
     )
     image = Image.alpha_composite(image.convert('RGBA'), overlay).convert('RGB')
 
+    # テキスト描画
     draw = ImageDraw.Draw(image)
-    padding = 10
-    lines = info_text.strip().split('\n')
     current_y = box_y + padding
-    for line in lines:
+    for line in wrapped:
+        if not line:
+            current_y += line_spacing
+            continue
         bb = draw.textbbox((0, 0), line, font=font)
         line_h = bb[3] - bb[1]
-        draw.text((box_x + padding, current_y - bb[1]), line, font=font, fill="black")
-        current_y += line_h + 8
-        if current_y > box_y + box_h - padding:
+        # 枠の下限チェック
+        if current_y + line_h > box_y + box_h - padding:
             break
+        draw.text((box_x + padding, current_y - bb[1]), line, font=font, fill="black")
+        current_y += line_h + line_spacing
+
     return image
 
 
@@ -167,9 +226,9 @@ def build_drag_editor_html(bg_b64, overlays_json, img_height):
   .pin-marker .pin-dot {{ width: 10px; height: 10px; background: red; border: 2px solid darkred; border-radius: 50%; }}
   .info-inner {{
     background: rgba(255,255,255,0.92); border: 1px solid #ccc;
-    border-radius: 8px; padding: 8px 12px; font-size: 13px;
-    line-height: 1.7; width: 100%; height: 100%;
-    overflow: hidden; white-space: pre-line;
+    border-radius: 8px; padding: 8px 10px; font-size: 11px;
+    line-height: 1.5; width: 100%; height: 100%;
+    overflow: hidden; white-space: pre-line; word-break: break-all;
   }}
   .layout-inner {{
     width: 100%; height: 100%; background: white;
