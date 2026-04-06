@@ -347,6 +347,12 @@ def build_drag_editor_html(bg_b64, overlays_json, canvas_w, canvas_h):
         var fontSize = Math.max(10, Math.min(48, nh * 0.55));
         labelInner.style.fontSize = fontSize + 'px';
       }}
+      var infoInner = activeEl.querySelector('.info-inner');
+      if (infoInner) {{
+        var infoFs = Math.max(8, Math.min(18, Math.min(nh * 0.09, nw * 0.05)));
+        infoInner.style.fontSize = infoFs + 'px';
+        infoInner.style.lineHeight = (infoFs * 1.5) + 'px';
+      }}
     }}
   }});
 
@@ -456,15 +462,16 @@ def build_drag_editor_html(bg_b64, overlays_json, canvas_w, canvas_h):
         ctx.lineWidth = 1;
         ctx.stroke();
 
-        // テキスト描画（自動折り返し）
+        // テキスト描画（自動折り返し・ボックスサイズ連動）
         var padding = 8;
         var textX = x + padding;
         var textY = y + padding;
         var maxTextW = w - padding * 2;
-        var lineH = 16;
+        var infoFs = Math.max(8, Math.min(18, Math.min(h * 0.09, w * 0.05)));
+        var lineH = Math.round(infoFs * 1.5);
         var infoText = ov.text || '';
         ctx.fillStyle = 'black';
-        ctx.font = '12px "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif';
+        ctx.font = infoFs + 'px "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
         var lines = infoText.split('\\n');
