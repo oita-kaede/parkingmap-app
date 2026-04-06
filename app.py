@@ -395,7 +395,8 @@ with col_left:
             buf_dl.getvalue(),
             "駐車場マップ.png",
             "image/png",
-            use_container_width=True
+            use_container_width=True,
+            key="dl_left"
         )
 
 # --- 右パネル ---
@@ -541,7 +542,8 @@ with col_right:
                     buf_dl.getvalue(),
                     "駐車場マップ.png",
                     "image/png",
-                    use_container_width=True
+                    use_container_width=True,
+                    key="dl_right"
                 )
 
             if st.button("🔧 配置を再調整する"):
