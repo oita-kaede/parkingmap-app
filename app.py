@@ -1,69 +1,15 @@
 import streamlit as st
-import json
 import numpy as np
 import cv2
 from PIL import Image, ImageDraw, ImageFont
 from streamlit_image_coordinates import streamlit_image_coordinates
-from google_auth_oauthlib.flow import Flow
-from googleapiclient.discovery import build
 import io
 import base64
 
 # カスタムコンポーネント
 from components.drag_editor import drag_editor
 
-# --- 🛠️ 設定 ---
-DRIVE_IDS = {
-    "工務店管轄": "1nqci7jC-FL4PUGuuSJ-FzMB7VwLLjY5w",
-    "不動産管轄": "1I8DmZL_B2fi-IZiDBSivo71ghBA-PWA7"
-}
-
 st.set_page_config(page_title="駐車場マップ作成ツール", layout="wide", page_icon="🅿️")
-
-# --- 🧠 サーバーの記憶領域 ---
-@st.cache_resource
-def get_auth_memory():
-    return {}
-
-auth_memory = get_auth_memory()
-
-# --- 🔐 Google認証 ---
-def get_flow():
-    client_config = json.loads(st.secrets["GCP_OAUTH_JSON"])
-    flow = Flow.from_client_config(
-        client_config,
-        scopes=['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/drive.metadata.readonly'],
-        redirect_uri=client_config["web"]["redirect_uris"][0]
-    )
-    return flow
-
-if "credentials" not in st.session_state:
-    st.title("🔒 Googleログインが必要です")
-    flow = get_flow()
-
-    if "code" in st.query_params:
-        try:
-            state = st.query_params.get("state")
-            if state in auth_memory:
-                flow.code_verifier = auth_memory.pop(state)
-            flow.fetch_token(code=st.query_params["code"])
-            st.session_state.credentials = flow.credentials
-            st.query_params.clear()
-            st.rerun()
-        except Exception as e:
-            st.error(f"⚠️ ログイン処理でエラーが発生しました。詳細: {e}")
-            if st.button("🔄 URLを綺麗にして最初からやり直す"):
-                st.query_params.clear()
-                st.rerun()
-            st.stop()
-    else:
-        auth_url, state = flow.authorization_url(prompt='consent', access_type='offline')
-        auth_memory[state] = getattr(flow, 'code_verifier', None)
-        st.info("会社のアカウントでログインして、Googleドライブへの保存を許可してください。")
-        st.link_button("Googleでログイン", auth_url)
-        st.stop()
-
-drive_service = build('drive', 'v3', credentials=st.session_state.credentials)
 
 
 # =============================================================
@@ -435,9 +381,3 @@ with col_right:
                 del st.session_state[key]
         st.session_state.place_step = 1
 
-# --- サイドバー ---
-st.sidebar.title("設定")
-if st.sidebar.button("🔄 ログイン状態をリセットする"):
-    if "credentials" in st.session_state:
-        del st.session_state.credentials
-    st.rerun()
