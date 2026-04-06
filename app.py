@@ -1,9 +1,9 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import numpy as np
 import cv2
 from PIL import Image, ImageDraw, ImageFont
 from streamlit_image_coordinates import streamlit_image_coordinates
+from components.drag_editor import drag_editor
 import io
 import base64
 import json
@@ -155,23 +155,44 @@ def overlay_layout_image(base_image, layout_pil, lx, ly, lw, lh):
     return base_image
 
 
-def render_final_image(base_image, site_pos, park_pos, info_text, layout_pil=None):
-    """クリック位置をもとに最終画像を生成"""
+def render_final_image(base_image, positions, info_text, layout_pil=None):
+    """ドラッグ後の位置をもとに最終画像を生成
+
+    Parameters
+    ----------
+    positions : dict
+        drag_editor から返される位置情報。
+        例: {"site-label": {"x":..,"y":..,"w":..,"h":..}, "parking-label": {...}, ...}
+    """
     result = base_image.copy()
     img_w, img_h = result.size
 
-    # 配置図（左上）
-    if layout_pil:
+    # 配置図
+    if layout_pil and "layout-img" in positions:
+        lp = positions["layout-img"]
+        result = overlay_layout_image(result, layout_pil, lp["x"], lp["y"], lp["w"], lp["h"])
+    elif layout_pil:
         result = overlay_layout_image(result, layout_pil, 10, 10, 150, 110)
 
-    # 建築現場ラベル（プレビューと同じサイズ感）
-    result = draw_yellow_label(result, site_pos[0], site_pos[1], "建築現場", font_size=18)
+    # 建築現場ラベル — ピン位置はラベルの下中央 + pin offset(16px)
+    if "site-label" in positions:
+        sp = positions["site-label"]
+        pin_x = sp["x"] + sp["w"] // 2
+        pin_y = sp["y"] + sp["h"] + 16
+        result = draw_yellow_label(result, pin_x, pin_y, "建築現場", font_size=18)
 
     # 駐車場ラベル
-    result = draw_yellow_label(result, park_pos[0], park_pos[1], "駐車場", font_size=18)
+    if "parking-label" in positions:
+        pp = positions["parking-label"]
+        pin_x = pp["x"] + pp["w"] // 2
+        pin_y = pp["y"] + pp["h"] + 16
+        result = draw_yellow_label(result, pin_x, pin_y, "駐車場", font_size=18)
 
-    # 情報欄（左下）
-    if info_text:
+    # 情報欄
+    if info_text and "info-box" in positions:
+        ip = positions["info-box"]
+        result = draw_info_box(result, info_text, ip["x"], ip["y"], ip["w"], ip["h"], font_size=14)
+    elif info_text:
         box_w, box_h = 230, 130
         box_x = 15
         box_y = max(0, img_h - box_h - 15)
@@ -179,192 +200,6 @@ def render_final_image(base_image, site_pos, park_pos, info_text, layout_pil=Non
 
     return result
 
-
-def build_drag_editor_html(bg_b64, overlays_json, img_height):
-    """ドラッグエディターのHTML（プレビュー用・確定ボタンなし）"""
-    return f'''<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{ font-family: -apple-system, 'Segoe UI', 'Hiragino Sans', sans-serif; background: transparent; }}
-  .editor-wrap {{ position: relative; display: inline-block; }}
-  .editor-wrap img {{ display: block; max-width: 100%; }}
-  .overlay {{
-    position: absolute; cursor: move;
-    border: 2px solid transparent; border-radius: 4px;
-    z-index: 20; transition: border-color 0.1s; user-select: none;
-  }}
-  .overlay:hover, .overlay.active {{
-    border-color: #FF6D00;
-    box-shadow: 0 0 0 1px rgba(255,109,0,0.3);
-  }}
-  .overlay .rh {{
-    position: absolute; width: 10px; height: 10px;
-    background: #FF6D00; border: 1.5px solid white;
-    border-radius: 2px; display: none; z-index: 30;
-  }}
-  .overlay:hover .rh, .overlay.active .rh {{ display: block; }}
-  .rh.tl {{ top: -5px; left: -5px; cursor: nw-resize; }}
-  .rh.tr {{ top: -5px; right: -5px; cursor: ne-resize; }}
-  .rh.bl {{ bottom: -5px; left: -5px; cursor: sw-resize; }}
-  .rh.br {{ bottom: -5px; right: -5px; cursor: se-resize; }}
-  .label-inner {{
-    background: #FFEB3B; border: 2px solid #F9A825; border-radius: 4px;
-    font-weight: bold; text-align: center; white-space: nowrap;
-    width: 100%; height: 100%; display: flex;
-    align-items: center; justify-content: center;
-    overflow: hidden; font-size: 15px;
-  }}
-  .pin-marker {{
-    position: absolute; bottom: -16px; left: 50%;
-    transform: translateX(-50%); pointer-events: none;
-    display: flex; flex-direction: column; align-items: center;
-  }}
-  .pin-marker .pin-line {{ width: 2px; height: 10px; background: #FFD600; }}
-  .pin-marker .pin-dot {{ width: 10px; height: 10px; background: red; border: 2px solid darkred; border-radius: 50%; }}
-  .info-inner {{
-    background: rgba(255,255,255,0.92); border: 1px solid #ccc;
-    border-radius: 8px; padding: 8px 10px; font-size: 11px;
-    line-height: 1.5; width: 100%; height: 100%;
-    overflow: hidden; white-space: pre-line; word-break: break-all;
-  }}
-  .layout-inner {{
-    width: 100%; height: 100%; background: white;
-    border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-    border-radius: 4px; overflow: hidden;
-  }}
-  .layout-inner img {{ width: 100%; height: 100%; object-fit: cover; }}
-  .help-badge {{
-    position: absolute; top: 6px; left: 50%;
-    transform: translateX(-50%); background: rgba(0,0,0,0.6);
-    color: white; font-size: 11px; padding: 4px 12px;
-    border-radius: 12px; z-index: 50; pointer-events: none;
-  }}
-</style>
-</head>
-<body>
-<div class="editor-wrap" id="editor-wrap">
-  <img id="bg-image" src="{bg_b64}" />
-  <div class="help-badge">ドラッグで移動 ／ 四隅■でリサイズ（プレビュー）</div>
-</div>
-<script>
-(function() {{
-  var wrap = document.getElementById('editor-wrap');
-  var bgImg = document.getElementById('bg-image');
-  var overlayData = {overlays_json};
-  var activeEl = null;
-  var mode = null;
-  var resizeDir = '';
-  var startX, startY, startLeft, startTop, startW, startH;
-
-  function createOverlayEl(ov) {{
-    var el = document.createElement('div');
-    el.className = 'overlay';
-    el.id = ov.id;
-    el.style.left = ov.x + 'px';
-    el.style.top = ov.y + 'px';
-    el.style.width = ov.w + 'px';
-    el.style.height = ov.h + 'px';
-    ['tl','tr','bl','br'].forEach(function(dir) {{
-      var rh = document.createElement('div');
-      rh.className = 'rh ' + dir;
-      rh.dataset.dir = dir;
-      el.appendChild(rh);
-    }});
-    if (ov.type === 'label') {{
-      var inner = document.createElement('div');
-      inner.className = 'label-inner';
-      inner.textContent = ov.text || '';
-      el.appendChild(inner);
-      var marker = document.createElement('div');
-      marker.className = 'pin-marker';
-      marker.innerHTML = '<div class="pin-line"></div><div class="pin-dot"></div>';
-      el.appendChild(marker);
-    }} else if (ov.type === 'info') {{
-      var inner2 = document.createElement('div');
-      inner2.className = 'info-inner';
-      inner2.textContent = ov.text || '';
-      el.appendChild(inner2);
-    }} else if (ov.type === 'layout') {{
-      var inner3 = document.createElement('div');
-      inner3.className = 'layout-inner';
-      if (ov.image_base64) {{
-        var img = document.createElement('img');
-        img.src = ov.image_base64;
-        inner3.appendChild(img);
-      }}
-      el.appendChild(inner3);
-    }}
-    el.addEventListener('mousedown', function(e) {{
-      if (e.target.classList.contains('rh')) return;
-      e.preventDefault();
-      setActive(el);
-      mode = 'drag';
-      startX = e.clientX; startY = e.clientY;
-      startLeft = el.offsetLeft; startTop = el.offsetTop;
-    }});
-    el.querySelectorAll('.rh').forEach(function(rh) {{
-      rh.addEventListener('mousedown', function(e) {{
-        e.preventDefault(); e.stopPropagation();
-        setActive(el);
-        mode = 'resize';
-        resizeDir = rh.dataset.dir;
-        startX = e.clientX; startY = e.clientY;
-        startLeft = el.offsetLeft; startTop = el.offsetTop;
-        startW = el.offsetWidth; startH = el.offsetHeight;
-      }});
-    }});
-    return el;
-  }}
-
-  function setActive(el) {{
-    document.querySelectorAll('.overlay').forEach(function(o) {{ o.classList.remove('active'); }});
-    if (el) el.classList.add('active');
-    activeEl = el;
-  }}
-
-  document.addEventListener('mousemove', function(e) {{
-    if (!activeEl) return;
-    e.preventDefault();
-    var dx = e.clientX - startX;
-    var dy = e.clientY - startY;
-    var maxW = bgImg.offsetWidth;
-    var maxH = bgImg.offsetHeight;
-    if (mode === 'drag') {{
-      var nl = Math.max(0, Math.min(startLeft + dx, maxW - activeEl.offsetWidth));
-      var nt = Math.max(0, Math.min(startTop + dy, maxH - activeEl.offsetHeight));
-      activeEl.style.left = nl + 'px';
-      activeEl.style.top = nt + 'px';
-    }} else if (mode === 'resize') {{
-      var nw = startW, nh = startH, nl2 = startLeft, nt2 = startTop;
-      var minW = 40, minH = 20;
-      if (resizeDir.includes('r')) nw = Math.max(minW, startW + dx);
-      if (resizeDir.includes('l')) {{ nw = Math.max(minW, startW - dx); nl2 = startLeft + (startW - nw); }}
-      if (resizeDir.includes('b')) nh = Math.max(minH, startH + dy);
-      if (resizeDir.includes('t')) {{ nh = Math.max(minH, startH - dy); nt2 = startTop + (startH - nh); }}
-      activeEl.style.width = nw + 'px';
-      activeEl.style.height = nh + 'px';
-      activeEl.style.left = nl2 + 'px';
-      activeEl.style.top = nt2 + 'px';
-      var labelInner = activeEl.querySelector('.label-inner');
-      if (labelInner) {{
-        var fontSize = Math.max(10, Math.min(48, nh * 0.55));
-        labelInner.style.fontSize = fontSize + 'px';
-      }}
-    }}
-  }});
-
-  document.addEventListener('mouseup', function() {{ mode = null; }});
-
-  overlayData.forEach(function(ov) {{
-    wrap.appendChild(createOverlayEl(ov));
-  }});
-}})();
-</script>
-</body>
-</html>'''
 
 
 # =============================================================
@@ -508,6 +343,7 @@ with col_right:
         # =============================================
         elif step == 3:
             st.subheader("🗺️ 配置の調整 — ドラッグで移動、四隅でリサイズ")
+            st.caption("要素をドラッグして位置を調整し、「✅ この配置で確定する」を押してください")
 
             bg_b64 = pil_to_base64(resized_image)
 
@@ -559,14 +395,15 @@ with col_right:
                     "h": 110
                 })
 
-            overlays_json = json.dumps(overlays, ensure_ascii=False)
-            editor_html = build_drag_editor_html(bg_b64, overlays_json, h_size)
-            components.html(editor_html, height=h_size + 30, scrolling=False)
+            # --- drag_editor コンポーネント（双方向通信） ---
+            result = drag_editor(
+                image_base64=bg_b64,
+                overlays=overlays,
+                key="drag_editor"
+            )
 
-            # --- 確定ボタン（Streamlit側） ---
-            st.write("")
-            if st.button("✅ この配置で確定する", type="primary", use_container_width=True):
-                # クリック位置からPILで最終画像を生成
+            # ユーザーが「確定」ボタンを押すと result に位置情報が返る
+            if result is not None:
                 layout_pil_final = None
                 if layout_file:
                     layout_file.seek(0)
@@ -574,8 +411,7 @@ with col_right:
 
                 final = render_final_image(
                     resized_image,
-                    st.session_state.site_pos,
-                    st.session_state.parking_pos,
+                    result,        # ドラッグ後の位置情報
                     info_text,
                     layout_pil_final
                 )
