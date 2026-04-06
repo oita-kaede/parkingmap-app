@@ -7,7 +7,7 @@
   body { font-family: -apple-system, 'Segoe UI', 'Hiragino Sans', sans-serif; background: transparent; overflow: hidden; }
 
   .editor-wrap { position: relative; display: inline-block; }
-  .editor-wrap img { display: block; }
+  .editor-wrap img { display: block; max-width: 100%; }
 
   /* Draggable elements */
   .overlay {
@@ -140,22 +140,79 @@
   <button class="confirm-btn" id="confirm-btn">✅ この配置で確定する</button>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@2.0.0/dist/streamlit-component-lib.js"></script>
 <script>
+/**
+ * Inline Streamlit Component Library
+ * CDN依存を排除してStreamlit Cloud互換性を確保
+ */
 (function() {
-  const wrap = document.getElementById('editor-wrap');
-  const bgImg = document.getElementById('bg-image');
-  const confirmBtn = document.getElementById('confirm-btn');
+  // --- Streamlit Communication Layer ---
+  var Streamlit = {
+    RENDER_EVENT: "streamlit:render",
+    _listeners: {},
+    events: {
+      _listeners: {},
+      addEventListener: function(type, fn) {
+        if (!this._listeners[type]) this._listeners[type] = [];
+        this._listeners[type].push(fn);
+      },
+      dispatchEvent: function(event) {
+        var fns = this._listeners[event.type] || [];
+        for (var i = 0; i < fns.length; i++) fns[i](event);
+      }
+    },
+    setComponentReady: function() {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:componentReady",
+        apiVersion: 1
+      }, "*");
+    },
+    setFrameHeight: function(height) {
+      if (!height) {
+        height = document.body.scrollHeight || 600;
+      }
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:setFrameHeight",
+        height: height
+      }, "*");
+    },
+    setComponentValue: function(value) {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:setComponentValue",
+        value: value,
+        dataType: "json"
+      }, "*");
+    }
+  };
 
-  let overlayData = [];
-  let overlayEls = {};
-  let activeEl = null;
-  let mode = null; // 'drag' | 'resize'
-  let resizeDir = '';
-  let startX, startY, startLeft, startTop, startW, startH;
+  // Listen for render messages from Streamlit
+  window.addEventListener("message", function(event) {
+    if (event.data && event.data.isStreamlitMessage) {
+      if (event.data.type === "streamlit:render") {
+        var renderEvent = new CustomEvent(Streamlit.RENDER_EVENT, { detail: event.data });
+        Streamlit.events.dispatchEvent(renderEvent);
+      }
+    }
+  });
+
+  // --- Editor Logic ---
+  var wrap = document.getElementById('editor-wrap');
+  var bgImg = document.getElementById('bg-image');
+  var confirmBtn = document.getElementById('confirm-btn');
+
+  var overlayData = [];
+  var overlayEls = {};
+  var activeEl = null;
+  var mode = null; // 'drag' | 'resize'
+  var resizeDir = '';
+  var startX, startY, startLeft, startTop, startW, startH;
+  var initialized = false;
 
   function createOverlayEl(ov) {
-    const el = document.createElement('div');
+    var el = document.createElement('div');
     el.className = 'overlay';
     el.id = ov.id;
     el.style.left = ov.x + 'px';
@@ -164,44 +221,44 @@
     el.style.height = ov.h + 'px';
 
     // Add resize handles
-    ['tl','tr','bl','br'].forEach(dir => {
-      const rh = document.createElement('div');
+    ['tl','tr','bl','br'].forEach(function(dir) {
+      var rh = document.createElement('div');
       rh.className = 'rh ' + dir;
       rh.dataset.dir = dir;
       el.appendChild(rh);
     });
 
     if (ov.type === 'label') {
-      const inner = document.createElement('div');
+      var inner = document.createElement('div');
       inner.className = 'label-inner';
       inner.textContent = ov.text || '';
       el.appendChild(inner);
       // Pin marker
-      const marker = document.createElement('div');
+      var marker = document.createElement('div');
       marker.className = 'pin-marker';
       marker.innerHTML = '<div class="pin-line"></div><div class="pin-dot"></div>';
       el.appendChild(marker);
     } else if (ov.type === 'info') {
-      const inner = document.createElement('div');
-      inner.className = 'info-inner';
-      inner.textContent = ov.text || '';
-      el.appendChild(inner);
+      var inner2 = document.createElement('div');
+      inner2.className = 'info-inner';
+      inner2.textContent = ov.text || '';
+      el.appendChild(inner2);
     } else if (ov.type === 'layout') {
-      const inner = document.createElement('div');
-      inner.className = 'layout-inner';
+      var inner3 = document.createElement('div');
+      inner3.className = 'layout-inner';
       if (ov.image_base64) {
-        const img = document.createElement('img');
+        var img = document.createElement('img');
         img.src = ov.image_base64;
-        inner.appendChild(img);
+        inner3.appendChild(img);
       } else {
-        inner.style.display = 'flex';
-        inner.style.alignItems = 'center';
-        inner.style.justifyContent = 'center';
-        inner.style.color = '#999';
-        inner.style.fontSize = '12px';
-        inner.textContent = '配置図';
+        inner3.style.display = 'flex';
+        inner3.style.alignItems = 'center';
+        inner3.style.justifyContent = 'center';
+        inner3.style.color = '#999';
+        inner3.style.fontSize = '12px';
+        inner3.textContent = '配置図';
       }
-      el.appendChild(inner);
+      el.appendChild(inner3);
     }
 
     // Event: drag start
@@ -217,7 +274,7 @@
     });
 
     // Event: resize start
-    el.querySelectorAll('.rh').forEach(rh => {
+    el.querySelectorAll('.rh').forEach(function(rh) {
       rh.addEventListener('mousedown', function(e) {
         e.preventDefault();
         e.stopPropagation();
@@ -237,7 +294,7 @@
   }
 
   function setActive(el) {
-    document.querySelectorAll('.overlay').forEach(o => o.classList.remove('active'));
+    document.querySelectorAll('.overlay').forEach(function(o) { o.classList.remove('active'); });
     if (el) el.classList.add('active');
     activeEl = el;
   }
@@ -245,32 +302,32 @@
   document.addEventListener('mousemove', function(e) {
     if (!activeEl) return;
     e.preventDefault();
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
-    const maxW = bgImg.offsetWidth;
-    const maxH = bgImg.offsetHeight;
+    var dx = e.clientX - startX;
+    var dy = e.clientY - startY;
+    var maxW = bgImg.offsetWidth;
+    var maxH = bgImg.offsetHeight;
 
     if (mode === 'drag') {
-      let nl = Math.max(0, Math.min(startLeft + dx, maxW - activeEl.offsetWidth));
-      let nt = Math.max(0, Math.min(startTop + dy, maxH - activeEl.offsetHeight));
+      var nl = Math.max(0, Math.min(startLeft + dx, maxW - activeEl.offsetWidth));
+      var nt = Math.max(0, Math.min(startTop + dy, maxH - activeEl.offsetHeight));
       activeEl.style.left = nl + 'px';
       activeEl.style.top = nt + 'px';
     } else if (mode === 'resize') {
-      let nw = startW, nh = startH, nl = startLeft, nt = startTop;
-      const minW = 40, minH = 20;
+      var nw = startW, nh = startH, nl2 = startLeft, nt2 = startTop;
+      var minW = 40, minH = 20;
       if (resizeDir.includes('r')) nw = Math.max(minW, startW + dx);
-      if (resizeDir.includes('l')) { nw = Math.max(minW, startW - dx); nl = startLeft + (startW - nw); }
+      if (resizeDir.includes('l')) { nw = Math.max(minW, startW - dx); nl2 = startLeft + (startW - nw); }
       if (resizeDir.includes('b')) nh = Math.max(minH, startH + dy);
-      if (resizeDir.includes('t')) { nh = Math.max(minH, startH - dy); nt = startTop + (startH - nh); }
+      if (resizeDir.includes('t')) { nh = Math.max(minH, startH - dy); nt2 = startTop + (startH - nh); }
       activeEl.style.width = nw + 'px';
       activeEl.style.height = nh + 'px';
-      activeEl.style.left = nl + 'px';
-      activeEl.style.top = nt + 'px';
+      activeEl.style.left = nl2 + 'px';
+      activeEl.style.top = nt2 + 'px';
 
       // ラベルの文字サイズをリサイズに連動
-      const labelInner = activeEl.querySelector('.label-inner');
+      var labelInner = activeEl.querySelector('.label-inner');
       if (labelInner) {
-        const fontSize = Math.max(10, Math.min(48, nh * 0.55));
+        var fontSize = Math.max(10, Math.min(48, nh * 0.55));
         labelInner.style.fontSize = fontSize + 'px';
       }
     }
@@ -282,9 +339,9 @@
 
   // Confirm button
   confirmBtn.addEventListener('click', function() {
-    const result = {};
-    overlayData.forEach(ov => {
-      const el = document.getElementById(ov.id);
+    var result = {};
+    overlayData.forEach(function(ov) {
+      var el = document.getElementById(ov.id);
       if (el) {
         result[ov.id] = {
           x: Math.round(el.offsetLeft),
@@ -299,29 +356,37 @@
 
   // Streamlit render
   function onRender(event) {
-    const data = event.detail;
-    const imgSrc = data.args.image_base64;
-    const overlaysJson = data.args.overlays;
+    var data = event.detail;
+    var imgSrc = data.args.image_base64;
+    var overlaysJson = data.args.overlays;
 
-    bgImg.src = imgSrc;
     overlayData = JSON.parse(overlaysJson);
 
     // Remove old overlays
-    document.querySelectorAll('.overlay').forEach(el => el.remove());
+    document.querySelectorAll('.overlay').forEach(function(el) { el.remove(); });
 
-    // Create new overlays
-    overlayData.forEach(ov => {
-      const el = createOverlayEl(ov);
-      wrap.appendChild(el);
-      overlayEls[ov.id] = el;
-    });
+    // Set image and wait for it to load before creating overlays
+    bgImg.onload = function() {
+      // Create overlays after image is loaded
+      overlayData.forEach(function(ov) {
+        var el = createOverlayEl(ov);
+        wrap.appendChild(el);
+        overlayEls[ov.id] = el;
+      });
 
-    Streamlit.setFrameHeight();
+      // Now that image is loaded, set frame height accurately
+      Streamlit.setFrameHeight(bgImg.offsetHeight + 60);
+    };
+
+    bgImg.src = imgSrc;
+
+    // Also set a minimum height immediately
+    Streamlit.setFrameHeight(600);
   }
 
   Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
   Streamlit.setComponentReady();
-  Streamlit.setFrameHeight();
+  Streamlit.setFrameHeight(600);
 })();
 </script>
 </body>
