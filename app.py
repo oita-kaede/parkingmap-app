@@ -195,9 +195,9 @@ def build_drag_editor_html(bg_b64, overlays_json, canvas_w, canvas_h):
   .pin-marker .pin-dot {{ width: 10px; height: 10px; background: red; border: 2px solid darkred; border-radius: 50%; }}
   .info-inner {{
     background: rgba(255,255,255,0.92); border: 1px solid #ccc;
-    border-radius: 8px; padding: 6px 10px; font-size: 11px;
-    line-height: 1.5; width: 100%; height: 100%;
-    overflow: hidden; white-space: pre-line; word-break: break-all;
+    border-radius: 8px; padding: 4px 7px; font-size: 11px;
+    line-height: 1.35; width: 100%;
+    white-space: pre-line; word-break: break-all;
   }}
   .layout-inner {{
     width: 100%; height: 100%; background: white;
@@ -348,10 +348,15 @@ def build_drag_editor_html(bg_b64, overlays_json, canvas_w, canvas_h):
       }}
       var infoInner = activeEl.querySelector('.info-inner');
       if (infoInner) {{
-        // 横幅だけで文字サイズを決定（縦は無視）
-        var infoFs = Math.max(8, Math.min(18, nw * 0.05));
+        // 横幅で文字サイズを決定 → 高さは常にテキストにぴったりフィット
+        var infoFs = Math.max(8, Math.min(18, nw * 0.055));
         infoInner.style.fontSize = infoFs + 'px';
-        infoInner.style.lineHeight = (infoFs * 1.5) + 'px';
+        infoInner.style.lineHeight = (infoFs * 1.35) + 'px';
+        // 一旦heightをautoにしてscrollHeightを正確に取得
+        activeEl.style.height = 'auto';
+        infoInner.style.height = 'auto';
+        var fitH = infoInner.scrollHeight;
+        activeEl.style.height = fitH + 'px';
       }}
     }}
   }});
@@ -362,16 +367,23 @@ def build_drag_editor_html(bg_b64, overlays_json, canvas_w, canvas_h):
     wrap.appendChild(createOverlayEl(ov));
   }});
 
-  // info-box の高さをテキスト内容に自動フィット（下の余白をなくす）
+  // info-box: 横幅で文字サイズ決定 → 高さをテキストにぴったりフィット
+  function autoFitInfoBox(el) {{
+    var inner = el ? el.querySelector('.info-inner') : null;
+    if (!inner) return;
+    var w = el.offsetWidth;
+    var fs = Math.max(8, Math.min(18, w * 0.055));
+    inner.style.fontSize = fs + 'px';
+    inner.style.lineHeight = (fs * 1.35) + 'px';
+    el.style.height = 'auto';
+    inner.style.height = 'auto';
+    var fitH = inner.scrollHeight;
+    el.style.height = fitH + 'px';
+  }}
   overlayData.forEach(function(ov) {{
     if (ov.type === 'info') {{
       var el = document.getElementById(ov.id);
-      var inner = el ? el.querySelector('.info-inner') : null;
-      if (inner) {{
-        // scrollHeightでテキスト実際の高さを取得してボックスをぴったりに
-        var realH = inner.scrollHeight + 2;
-        el.style.height = realH + 'px';
-      }}
+      autoFitInfoBox(el);
     }}
   }});
 
@@ -453,19 +465,47 @@ def build_drag_editor_html(bg_b64, overlays_json, canvas_w, canvas_h):
       }}
 
       if (ov.type === 'info') {{
-        // 情報欄：白背景 + テキスト
-        ctx.globalAlpha = 0.9;
+        // 情報欄：横幅で文字サイズ決定 → テキスト高さ計算 → ぴったり描画
+        var pad = 4;
+        var maxTextW = w - pad * 2 - 6;
+        var infoFs = Math.max(8, Math.min(18, w * 0.055));
+        var lineH = Math.round(infoFs * 1.35);
+        var infoText = ov.text || '';
+        ctx.font = infoFs + 'px "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif';
+
+        // まずテキストの折り返し＆行数を計算
+        var wrappedLines = [];
+        var rawLines = infoText.split('\\n');
+        rawLines.forEach(function(line) {{
+          var cur = '';
+          for (var i = 0; i < line.length; i++) {{
+            var test = cur + line[i];
+            if (ctx.measureText(test).width > maxTextW && cur.length > 0) {{
+              wrappedLines.push(cur);
+              cur = line[i];
+            }} else {{
+              cur = test;
+            }}
+          }}
+          if (cur) wrappedLines.push(cur);
+        }});
+
+        // テキストにぴったりの高さを計算（常にテキストにフィット）
+        var textTotalH = wrappedLines.length * lineH + pad * 2;
+        var boxH = textTotalH;
+
+        // 角丸白背景
+        ctx.globalAlpha = 0.92;
         ctx.fillStyle = 'white';
-        // 角丸矩形
         var r = 8;
         ctx.beginPath();
         ctx.moveTo(x + r, y);
         ctx.lineTo(x + w - r, y);
         ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-        ctx.lineTo(x + w, y + h - r);
-        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-        ctx.lineTo(x + r, y + h);
-        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x + w, y + boxH - r);
+        ctx.quadraticCurveTo(x + w, y + boxH, x + w - r, y + boxH);
+        ctx.lineTo(x + r, y + boxH);
+        ctx.quadraticCurveTo(x, y + boxH, x, y + boxH - r);
         ctx.lineTo(x, y + r);
         ctx.quadraticCurveTo(x, y, x + r, y);
         ctx.closePath();
@@ -475,38 +515,15 @@ def build_drag_editor_html(bg_b64, overlays_json, canvas_w, canvas_h):
         ctx.lineWidth = 1;
         ctx.stroke();
 
-        // テキスト描画（自動折り返し・横幅で文字サイズ連動）
-        var padding = 8;
-        var textX = x + padding;
-        var textY = y + padding;
-        var maxTextW = w - padding * 2;
-        var infoFs = Math.max(8, Math.min(18, w * 0.05));
-        var lineH = Math.round(infoFs * 1.5);
-        var infoText = ov.text || '';
+        // テキスト描画
         ctx.fillStyle = 'black';
         ctx.font = infoFs + 'px "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-        var lines = infoText.split('\\n');
-        var curY = textY;
-        lines.forEach(function(line) {{
-          // 文字ごとに折り返し
-          var cur = '';
-          for (var i = 0; i < line.length; i++) {{
-            var test = cur + line[i];
-            if (ctx.measureText(test).width > maxTextW && cur.length > 0) {{
-              if (curY + lineH > y + h - padding) return;
-              ctx.fillText(cur, textX, curY);
-              curY += lineH;
-              cur = line[i];
-            }} else {{
-              cur = test;
-            }}
-          }}
-          if (cur && curY + lineH <= y + h - padding) {{
-            ctx.fillText(cur, textX, curY);
-            curY += lineH;
-          }}
+        var curY = y + pad;
+        wrappedLines.forEach(function(line) {{
+          ctx.fillText(line, x + pad + 3, curY);
+          curY += lineH;
         }});
       }}
     }});
