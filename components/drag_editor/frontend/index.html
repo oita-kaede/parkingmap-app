@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'Segoe UI', 'Hiragino Sans', sans-serif; background: transparent; overflow: hidden; }
+
+  .editor-wrap { position: relative; display: inline-block; }
+  .editor-wrap img { display: block; }
+
+  /* Draggable elements */
+  .overlay {
+    position: absolute;
+    cursor: move;
+    border: 2px solid transparent;
+    border-radius: 4px;
+    z-index: 20;
+    transition: border-color 0.1s;
+    user-select: none;
+  }
+  .overlay:hover, .overlay.active {
+    border-color: #FF6D00;
+    box-shadow: 0 0 0 1px rgba(255,109,0,0.3);
+  }
+
+  /* Resize handles */
+  .overlay .rh {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: #FF6D00;
+    border: 1.5px solid white;
+    border-radius: 2px;
+    display: none;
+    z-index: 30;
+  }
+  .overlay:hover .rh, .overlay.active .rh { display: block; }
+  .rh.tl { top: -5px; left: -5px; cursor: nw-resize; }
+  .rh.tr { top: -5px; right: -5px; cursor: ne-resize; }
+  .rh.bl { bottom: -5px; left: -5px; cursor: sw-resize; }
+  .rh.br { bottom: -5px; right: -5px; cursor: se-resize; }
+
+  /* Label style */
+  .label-inner {
+    background: #FFEB3B;
+    border: 2px solid #F9A825;
+    border-radius: 4px;
+    font-weight: bold;
+    text-align: center;
+    white-space: nowrap;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-size: 15px;
+    transition: font-size 0.05s;
+  }
+  .pin-marker {
+    position: absolute;
+    bottom: -16px;
+    left: 50%;
+    transform: translateX(-50%);
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .pin-marker .pin-line { width: 2px; height: 10px; background: #FFD600; }
+  .pin-marker .pin-dot { width: 10px; height: 10px; background: red; border: 2px solid darkred; border-radius: 50%; }
+
+  /* Info box */
+  .info-inner {
+    background: rgba(255,255,255,0.92);
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.7;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    white-space: pre-line;
+  }
+
+  /* Layout image */
+  .layout-inner {
+    width: 100%;
+    height: 100%;
+    background: white;
+    border: 3px solid white;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .layout-inner img { width: 100%; height: 100%; object-fit: cover; }
+
+  /* Confirm button */
+  .confirm-bar {
+    margin-top: 8px;
+    text-align: center;
+  }
+  .confirm-btn {
+    background: #FF6D00;
+    color: white;
+    border: none;
+    padding: 8px 32px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  .confirm-btn:hover { background: #E65100; }
+
+  .help-badge {
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.6);
+    color: white;
+    font-size: 11px;
+    padding: 4px 12px;
+    border-radius: 12px;
+    z-index: 50;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<div class="editor-wrap" id="editor-wrap">
+  <img id="bg-image" src="" />
+  <div class="help-badge">ドラッグで移動 ／ 四隅■でリサイズ</div>
+</div>
+<div class="confirm-bar">
+  <button class="confirm-btn" id="confirm-btn">✅ この配置で確定する</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@2.0.0/dist/streamlit-component-lib.js"></script>
+<script>
+(function() {
+  const wrap = document.getElementById('editor-wrap');
+  const bgImg = document.getElementById('bg-image');
+  const confirmBtn = document.getElementById('confirm-btn');
+
+  let overlayData = [];
+  let overlayEls = {};
+  let activeEl = null;
+  let mode = null; // 'drag' | 'resize'
+  let resizeDir = '';
+  let startX, startY, startLeft, startTop, startW, startH;
+
+  function createOverlayEl(ov) {
+    const el = document.createElement('div');
+    el.className = 'overlay';
+    el.id = ov.id;
+    el.style.left = ov.x + 'px';
+    el.style.top = ov.y + 'px';
+    el.style.width = ov.w + 'px';
+    el.style.height = ov.h + 'px';
+
+    // Add resize handles
+    ['tl','tr','bl','br'].forEach(dir => {
+      const rh = document.createElement('div');
+      rh.className = 'rh ' + dir;
+      rh.dataset.dir = dir;
+      el.appendChild(rh);
+    });
+
+    if (ov.type === 'label') {
+      const inner = document.createElement('div');
+      inner.className = 'label-inner';
+      inner.textContent = ov.text || '';
+      el.appendChild(inner);
+      // Pin marker
+      const marker = document.createElement('div');
+      marker.className = 'pin-marker';
+      marker.innerHTML = '<div class="pin-line"></div><div class="pin-dot"></div>';
+      el.appendChild(marker);
+    } else if (ov.type === 'info') {
+      const inner = document.createElement('div');
+      inner.className = 'info-inner';
+      inner.textContent = ov.text || '';
+      el.appendChild(inner);
+    } else if (ov.type === 'layout') {
+      const inner = document.createElement('div');
+      inner.className = 'layout-inner';
+      if (ov.image_base64) {
+        const img = document.createElement('img');
+        img.src = ov.image_base64;
+        inner.appendChild(img);
+      } else {
+        inner.style.display = 'flex';
+        inner.style.alignItems = 'center';
+        inner.style.justifyContent = 'center';
+        inner.style.color = '#999';
+        inner.style.fontSize = '12px';
+        inner.textContent = '配置図';
+      }
+      el.appendChild(inner);
+    }
+
+    // Event: drag start
+    el.addEventListener('mousedown', function(e) {
+      if (e.target.classList.contains('rh')) return;
+      e.preventDefault();
+      setActive(el);
+      mode = 'drag';
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = el.offsetLeft;
+      startTop = el.offsetTop;
+    });
+
+    // Event: resize start
+    el.querySelectorAll('.rh').forEach(rh => {
+      rh.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        setActive(el);
+        mode = 'resize';
+        resizeDir = rh.dataset.dir;
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = el.offsetLeft;
+        startTop = el.offsetTop;
+        startW = el.offsetWidth;
+        startH = el.offsetHeight;
+      });
+    });
+
+    return el;
+  }
+
+  function setActive(el) {
+    document.querySelectorAll('.overlay').forEach(o => o.classList.remove('active'));
+    if (el) el.classList.add('active');
+    activeEl = el;
+  }
+
+  document.addEventListener('mousemove', function(e) {
+    if (!activeEl) return;
+    e.preventDefault();
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    const maxW = bgImg.offsetWidth;
+    const maxH = bgImg.offsetHeight;
+
+    if (mode === 'drag') {
+      let nl = Math.max(0, Math.min(startLeft + dx, maxW - activeEl.offsetWidth));
+      let nt = Math.max(0, Math.min(startTop + dy, maxH - activeEl.offsetHeight));
+      activeEl.style.left = nl + 'px';
+      activeEl.style.top = nt + 'px';
+    } else if (mode === 'resize') {
+      let nw = startW, nh = startH, nl = startLeft, nt = startTop;
+      const minW = 40, minH = 20;
+      if (resizeDir.includes('r')) nw = Math.max(minW, startW + dx);
+      if (resizeDir.includes('l')) { nw = Math.max(minW, startW - dx); nl = startLeft + (startW - nw); }
+      if (resizeDir.includes('b')) nh = Math.max(minH, startH + dy);
+      if (resizeDir.includes('t')) { nh = Math.max(minH, startH - dy); nt = startTop + (startH - nh); }
+      activeEl.style.width = nw + 'px';
+      activeEl.style.height = nh + 'px';
+      activeEl.style.left = nl + 'px';
+      activeEl.style.top = nt + 'px';
+
+      // ラベルの文字サイズをリサイズに連動
+      const labelInner = activeEl.querySelector('.label-inner');
+      if (labelInner) {
+        const fontSize = Math.max(10, Math.min(48, nh * 0.55));
+        labelInner.style.fontSize = fontSize + 'px';
+      }
+    }
+  });
+
+  document.addEventListener('mouseup', function() {
+    mode = null;
+  });
+
+  // Confirm button
+  confirmBtn.addEventListener('click', function() {
+    const result = {};
+    overlayData.forEach(ov => {
+      const el = document.getElementById(ov.id);
+      if (el) {
+        result[ov.id] = {
+          x: Math.round(el.offsetLeft),
+          y: Math.round(el.offsetTop),
+          w: Math.round(el.offsetWidth),
+          h: Math.round(el.offsetHeight)
+        };
+      }
+    });
+    Streamlit.setComponentValue(result);
+  });
+
+  // Streamlit render
+  function onRender(event) {
+    const data = event.detail;
+    const imgSrc = data.args.image_base64;
+    const overlaysJson = data.args.overlays;
+
+    bgImg.src = imgSrc;
+    overlayData = JSON.parse(overlaysJson);
+
+    // Remove old overlays
+    document.querySelectorAll('.overlay').forEach(el => el.remove());
+
+    // Create new overlays
+    overlayData.forEach(ov => {
+      const el = createOverlayEl(ov);
+      wrap.appendChild(el);
+      overlayEls[ov.id] = el;
+    });
+
+    Streamlit.setFrameHeight();
+  }
+
+  Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
+  Streamlit.setComponentReady();
+  Streamlit.setFrameHeight();
+})();
+</script>
+</body>
+</html>
