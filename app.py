@@ -105,19 +105,18 @@ def render_final_image(base_image, site_pos, park_pos, info_text, layout_pil=Non
     if layout_pil:
         result = overlay_layout_image(result, layout_pil, 10, 10, 150, 110)
 
-    # 建築現場ラベル
-    result = draw_yellow_label(result, site_pos[0], site_pos[1], "建築現場", font_size=32)
+    # 建築現場ラベル（プレビューと同じサイズ感）
+    result = draw_yellow_label(result, site_pos[0], site_pos[1], "建築現場", font_size=18)
 
     # 駐車場ラベル
-    result = draw_yellow_label(result, park_pos[0], park_pos[1], "駐車場", font_size=32)
+    result = draw_yellow_label(result, park_pos[0], park_pos[1], "駐車場", font_size=18)
 
     # 情報欄（左下）
     if info_text:
         box_w, box_h = 230, 130
         box_x = 15
         box_y = max(0, img_h - box_h - 15)
-        font_size = max(14, min(32, int(box_h / max(1, info_text.count('\n') + 1) * 0.6)))
-        result = draw_info_box(result, info_text, box_x, box_y, box_w, box_h, font_size=font_size)
+        result = draw_info_box(result, info_text, box_x, box_y, box_w, box_h, font_size=14)
 
     return result
 
