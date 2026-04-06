@@ -163,16 +163,15 @@ def build_drag_editor_html(bg_b64, overlays_json, canvas_w, canvas_h):
   .editor-wrap img {{ display: block; width: {canvas_w}px; height: {canvas_h}px; }}
   .overlay {{
     position: absolute; cursor: move;
-    border: 2px solid transparent; border-radius: 4px;
+    border: 1px dashed transparent; border-radius: 4px;
     z-index: 20; transition: border-color 0.1s; user-select: none;
   }}
   .overlay:hover, .overlay.active {{
-    border-color: #FF6D00;
-    box-shadow: 0 0 0 1px rgba(255,109,0,0.3);
+    border-color: rgba(255,109,0,0.5);
   }}
   .overlay .rh {{
-    position: absolute; width: 10px; height: 10px;
-    background: #FF6D00; border: 1.5px solid white;
+    position: absolute; width: 8px; height: 8px;
+    background: #FF6D00; border: 1px solid white;
     border-radius: 2px; display: none; z-index: 30;
   }}
   .overlay:hover .rh, .overlay.active .rh {{ display: block; }}
