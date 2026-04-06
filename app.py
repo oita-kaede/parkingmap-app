@@ -196,7 +196,7 @@ def build_drag_editor_html(bg_b64, overlays_json, canvas_w, canvas_h):
   .pin-marker .pin-dot {{ width: 10px; height: 10px; background: red; border: 2px solid darkred; border-radius: 50%; }}
   .info-inner {{
     background: rgba(255,255,255,0.92); border: 1px solid #ccc;
-    border-radius: 8px; padding: 8px 10px; font-size: 11px;
+    border-radius: 8px; padding: 6px 10px; font-size: 11px;
     line-height: 1.5; width: 100%; height: 100%;
     overflow: hidden; white-space: pre-line; word-break: break-all;
   }}
@@ -369,11 +369,9 @@ def build_drag_editor_html(bg_b64, overlays_json, canvas_w, canvas_h):
       var el = document.getElementById(ov.id);
       var inner = el ? el.querySelector('.info-inner') : null;
       if (inner) {{
-        // scrollHeightでテキスト実際の高さを取得してボックスを縮める
-        var realH = inner.scrollHeight + 4;  // +4はborderの分
-        if (realH < el.offsetHeight) {{
-          el.style.height = realH + 'px';
-        }}
+        // scrollHeightでテキスト実際の高さを取得してボックスをぴったりに
+        var realH = inner.scrollHeight + 2;
+        el.style.height = realH + 'px';
       }}
     }}
   }});
