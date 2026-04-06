@@ -15,9 +15,12 @@ st.set_page_config(page_title="駐車場マップ作成ツール", layout="wide"
 # ユーティリティ関数
 # =============================================================
 
-def pil_to_base64(pil_image, fmt="PNG"):
+def pil_to_base64(pil_image, fmt="PNG", quality=85):
     buf = io.BytesIO()
-    pil_image.save(buf, format=fmt)
+    if fmt.upper() == "JPEG":
+        pil_image.save(buf, format="JPEG", quality=quality, optimize=True)
+    else:
+        pil_image.save(buf, format=fmt)
     b64 = base64.b64encode(buf.getvalue()).decode()
     return f"data:image/{fmt.lower()};base64,{b64}"
 
@@ -345,7 +348,7 @@ with col_right:
             st.subheader("🗺️ 配置の調整 — ドラッグで移動、四隅でリサイズ")
             st.caption("要素をドラッグして位置を調整し、「✅ この配置で確定する」を押してください")
 
-            bg_b64 = pil_to_base64(resized_image)
+            bg_b64 = pil_to_base64(resized_image, fmt="JPEG", quality=60)
 
             site_x, site_y = st.session_state.site_pos
             park_x, park_y = st.session_state.parking_pos
@@ -384,7 +387,7 @@ with col_right:
 
             if layout_file:
                 layout_pil = Image.open(layout_file).convert("RGB")
-                layout_b64 = pil_to_base64(layout_pil)
+                layout_b64 = pil_to_base64(layout_pil, fmt="JPEG", quality=50)
                 overlays.append({
                     "id": "layout-img",
                     "type": "layout",
