@@ -1,13 +1,13 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import numpy as np
 import cv2
 from PIL import Image, ImageDraw, ImageFont
 from streamlit_image_coordinates import streamlit_image_coordinates
 import io
 import base64
-
-# カスタムコンポーネント
-from components.drag_editor import drag_editor
+import json
+import urllib.parse
 
 st.set_page_config(page_title="駐車場マップ作成ツール", layout="wide", page_icon="🅿️")
 
@@ -100,7 +100,6 @@ def overlay_layout_image(base_image, layout_pil, lx, ly, lw, lh):
     border = 3
     bordered = Image.new('RGB', (resized.width + border * 2, resized.height + border * 2), 'white')
     bordered.paste(resized, (border, border))
-    # 貼り付け位置を制限
     px = max(0, min(lx, base_image.width - bordered.width))
     py = max(0, min(ly, base_image.height - bordered.height))
     base_image.paste(bordered, (px, py))
@@ -120,7 +119,7 @@ def render_final_image(base_image, positions, info_text, layout_pil=None):
     if "site-label" in positions:
         p = positions["site-label"]
         cx = p["x"] + p["w"] // 2
-        cy = p["y"] + p["h"] + 16  # ピンはラベルの下
+        cy = p["y"] + p["h"] + 16
         font_size = max(16, min(48, int(p["h"] * 0.7)))
         result = draw_yellow_label(result, cx, cy, "建築現場", font_size=font_size)
 
@@ -141,15 +140,243 @@ def render_final_image(base_image, positions, info_text, layout_pil=None):
     return result
 
 
+def build_drag_editor_html(bg_b64, overlays_json, img_height):
+    """ドラッグエディターのHTMLを生成（st.components.v1.html用）"""
+    return f'''<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ font-family: -apple-system, 'Segoe UI', 'Hiragino Sans', sans-serif; background: transparent; }}
+  .editor-wrap {{ position: relative; display: inline-block; }}
+  .editor-wrap img {{ display: block; max-width: 100%; }}
+  .overlay {{
+    position: absolute; cursor: move;
+    border: 2px solid transparent; border-radius: 4px;
+    z-index: 20; transition: border-color 0.1s; user-select: none;
+  }}
+  .overlay:hover, .overlay.active {{
+    border-color: #FF6D00;
+    box-shadow: 0 0 0 1px rgba(255,109,0,0.3);
+  }}
+  .overlay .rh {{
+    position: absolute; width: 10px; height: 10px;
+    background: #FF6D00; border: 1.5px solid white;
+    border-radius: 2px; display: none; z-index: 30;
+  }}
+  .overlay:hover .rh, .overlay.active .rh {{ display: block; }}
+  .rh.tl {{ top: -5px; left: -5px; cursor: nw-resize; }}
+  .rh.tr {{ top: -5px; right: -5px; cursor: ne-resize; }}
+  .rh.bl {{ bottom: -5px; left: -5px; cursor: sw-resize; }}
+  .rh.br {{ bottom: -5px; right: -5px; cursor: se-resize; }}
+  .label-inner {{
+    background: #FFEB3B; border: 2px solid #F9A825; border-radius: 4px;
+    font-weight: bold; text-align: center; white-space: nowrap;
+    width: 100%; height: 100%; display: flex;
+    align-items: center; justify-content: center;
+    overflow: hidden; font-size: 15px;
+  }}
+  .pin-marker {{
+    position: absolute; bottom: -16px; left: 50%;
+    transform: translateX(-50%); pointer-events: none;
+    display: flex; flex-direction: column; align-items: center;
+  }}
+  .pin-marker .pin-line {{ width: 2px; height: 10px; background: #FFD600; }}
+  .pin-marker .pin-dot {{ width: 10px; height: 10px; background: red; border: 2px solid darkred; border-radius: 50%; }}
+  .info-inner {{
+    background: rgba(255,255,255,0.92); border: 1px solid #ccc;
+    border-radius: 8px; padding: 8px 12px; font-size: 13px;
+    line-height: 1.7; width: 100%; height: 100%;
+    overflow: hidden; white-space: pre-line;
+  }}
+  .layout-inner {{
+    width: 100%; height: 100%; background: white;
+    border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    border-radius: 4px; overflow: hidden;
+  }}
+  .layout-inner img {{ width: 100%; height: 100%; object-fit: cover; }}
+  .confirm-bar {{ margin-top: 8px; text-align: center; }}
+  .confirm-btn {{
+    background: #FF6D00; color: white; border: none;
+    padding: 10px 40px; border-radius: 8px; font-size: 15px;
+    font-weight: bold; cursor: pointer;
+  }}
+  .confirm-btn:hover {{ background: #E65100; }}
+  .help-badge {{
+    position: absolute; top: 6px; left: 50%;
+    transform: translateX(-50%); background: rgba(0,0,0,0.6);
+    color: white; font-size: 11px; padding: 4px 12px;
+    border-radius: 12px; z-index: 50; pointer-events: none;
+  }}
+</style>
+</head>
+<body>
+<div class="editor-wrap" id="editor-wrap">
+  <img id="bg-image" src="{bg_b64}" />
+  <div class="help-badge">ドラッグで移動 ／ 四隅■でリサイズ</div>
+</div>
+<div class="confirm-bar">
+  <button class="confirm-btn" id="confirm-btn">✅ この配置で確定する</button>
+</div>
+<script>
+(function() {{
+  var wrap = document.getElementById('editor-wrap');
+  var bgImg = document.getElementById('bg-image');
+  var confirmBtn = document.getElementById('confirm-btn');
+  var overlayData = {overlays_json};
+  var activeEl = null;
+  var mode = null;
+  var resizeDir = '';
+  var startX, startY, startLeft, startTop, startW, startH;
+
+  function createOverlayEl(ov) {{
+    var el = document.createElement('div');
+    el.className = 'overlay';
+    el.id = ov.id;
+    el.style.left = ov.x + 'px';
+    el.style.top = ov.y + 'px';
+    el.style.width = ov.w + 'px';
+    el.style.height = ov.h + 'px';
+    ['tl','tr','bl','br'].forEach(function(dir) {{
+      var rh = document.createElement('div');
+      rh.className = 'rh ' + dir;
+      rh.dataset.dir = dir;
+      el.appendChild(rh);
+    }});
+    if (ov.type === 'label') {{
+      var inner = document.createElement('div');
+      inner.className = 'label-inner';
+      inner.textContent = ov.text || '';
+      el.appendChild(inner);
+      var marker = document.createElement('div');
+      marker.className = 'pin-marker';
+      marker.innerHTML = '<div class="pin-line"></div><div class="pin-dot"></div>';
+      el.appendChild(marker);
+    }} else if (ov.type === 'info') {{
+      var inner2 = document.createElement('div');
+      inner2.className = 'info-inner';
+      inner2.textContent = ov.text || '';
+      el.appendChild(inner2);
+    }} else if (ov.type === 'layout') {{
+      var inner3 = document.createElement('div');
+      inner3.className = 'layout-inner';
+      if (ov.image_base64) {{
+        var img = document.createElement('img');
+        img.src = ov.image_base64;
+        inner3.appendChild(img);
+      }}
+      el.appendChild(inner3);
+    }}
+    el.addEventListener('mousedown', function(e) {{
+      if (e.target.classList.contains('rh')) return;
+      e.preventDefault();
+      setActive(el);
+      mode = 'drag';
+      startX = e.clientX; startY = e.clientY;
+      startLeft = el.offsetLeft; startTop = el.offsetTop;
+    }});
+    el.querySelectorAll('.rh').forEach(function(rh) {{
+      rh.addEventListener('mousedown', function(e) {{
+        e.preventDefault(); e.stopPropagation();
+        setActive(el);
+        mode = 'resize';
+        resizeDir = rh.dataset.dir;
+        startX = e.clientX; startY = e.clientY;
+        startLeft = el.offsetLeft; startTop = el.offsetTop;
+        startW = el.offsetWidth; startH = el.offsetHeight;
+      }});
+    }});
+    return el;
+  }}
+
+  function setActive(el) {{
+    document.querySelectorAll('.overlay').forEach(function(o) {{ o.classList.remove('active'); }});
+    if (el) el.classList.add('active');
+    activeEl = el;
+  }}
+
+  document.addEventListener('mousemove', function(e) {{
+    if (!activeEl) return;
+    e.preventDefault();
+    var dx = e.clientX - startX;
+    var dy = e.clientY - startY;
+    var maxW = bgImg.offsetWidth;
+    var maxH = bgImg.offsetHeight;
+    if (mode === 'drag') {{
+      var nl = Math.max(0, Math.min(startLeft + dx, maxW - activeEl.offsetWidth));
+      var nt = Math.max(0, Math.min(startTop + dy, maxH - activeEl.offsetHeight));
+      activeEl.style.left = nl + 'px';
+      activeEl.style.top = nt + 'px';
+    }} else if (mode === 'resize') {{
+      var nw = startW, nh = startH, nl2 = startLeft, nt2 = startTop;
+      var minW = 40, minH = 20;
+      if (resizeDir.includes('r')) nw = Math.max(minW, startW + dx);
+      if (resizeDir.includes('l')) {{ nw = Math.max(minW, startW - dx); nl2 = startLeft + (startW - nw); }}
+      if (resizeDir.includes('b')) nh = Math.max(minH, startH + dy);
+      if (resizeDir.includes('t')) {{ nh = Math.max(minH, startH - dy); nt2 = startTop + (startH - nh); }}
+      activeEl.style.width = nw + 'px';
+      activeEl.style.height = nh + 'px';
+      activeEl.style.left = nl2 + 'px';
+      activeEl.style.top = nt2 + 'px';
+      var labelInner = activeEl.querySelector('.label-inner');
+      if (labelInner) {{
+        var fontSize = Math.max(10, Math.min(48, nh * 0.55));
+        labelInner.style.fontSize = fontSize + 'px';
+      }}
+    }}
+  }});
+
+  document.addEventListener('mouseup', function() {{ mode = null; }});
+
+  confirmBtn.addEventListener('click', function() {{
+    var result = {{}};
+    overlayData.forEach(function(ov) {{
+      var el = document.getElementById(ov.id);
+      if (el) {{
+        result[ov.id] = {{
+          x: Math.round(el.offsetLeft),
+          y: Math.round(el.offsetTop),
+          w: Math.round(el.offsetWidth),
+          h: Math.round(el.offsetHeight)
+        }};
+      }}
+    }});
+    var encoded = btoa(unescape(encodeURIComponent(JSON.stringify(result))));
+    window.parent.location.search = '?positions=' + encoded;
+  }});
+
+  // Create overlays
+  overlayData.forEach(function(ov) {{
+    wrap.appendChild(createOverlayEl(ov));
+  }});
+}})();
+</script>
+</body>
+</html>'''
+
+
 # =============================================================
 # メインアプリ
 # =============================================================
 
 st.title("🅿️ 駐車場マップ作成ツール")
 
+# --- クエリパラメータから確定データを取得 ---
+query_positions = st.query_params.get("positions", None)
+if query_positions:
+    try:
+        decoded = base64.b64decode(query_positions).decode('utf-8')
+        st.session_state.editor_positions = json.loads(decoded)
+        st.session_state.place_step = 4  # 確定済みへ
+        # クエリパラメータをクリア
+        st.query_params.clear()
+    except Exception:
+        st.query_params.clear()
+
 # --- session_state の初期化 ---
 if "place_step" not in st.session_state:
-    st.session_state.place_step = 1  # 1=建築現場待ち, 2=駐車場待ち, 3=配置調整, 4=確定済み
+    st.session_state.place_step = 1
 if "site_pos" not in st.session_state:
     st.session_state.site_pos = None
 if "parking_pos" not in st.session_state:
@@ -252,7 +479,6 @@ with col_right:
                 display_img = resized_image
             else:
                 st.info("② 地図上で **「駐車場」の位置** をクリックしてください")
-                # 建築現場だけ描いたプレビュー
                 if "result_image" in st.session_state:
                     display_img = st.session_state.result_image
                 else:
@@ -285,7 +511,6 @@ with col_right:
 
             bg_b64 = pil_to_base64(resized_image)
 
-            # 各要素の初期位置を計算
             site_x, site_y = st.session_state.site_pos
             park_x, park_y = st.session_state.parking_pos
 
@@ -310,7 +535,6 @@ with col_right:
                 },
             ]
 
-            # 情報欄
             if info_text:
                 overlays.append({
                     "id": "info-box",
@@ -322,7 +546,6 @@ with col_right:
                     "h": 130
                 })
 
-            # 配置図
             if layout_file:
                 layout_pil = Image.open(layout_file).convert("RGB")
                 layout_b64 = pil_to_base64(layout_pil)
@@ -336,34 +559,31 @@ with col_right:
                     "h": 110
                 })
 
-            # ドラッグエディター表示
-            editor_result = drag_editor(bg_b64, overlays, key="drag_editor")
+            overlays_json = json.dumps(overlays, ensure_ascii=False)
+            editor_html = build_drag_editor_html(bg_b64, overlays_json, h_size)
+            components.html(editor_html, height=h_size + 80, scrolling=False)
 
-            if editor_result:
-                # 確定ボタンが押された → 最終画像を生成
-                st.session_state.editor_positions = editor_result
+        # =============================================
+        # STEP 4: 確定済み — 最終画像生成＆表示
+        # =============================================
+        elif step == 4:
+            st.subheader("🗺️ 完成マップ")
 
-                # 配置図PIL
+            # 最終画像を生成（まだなければ）
+            if st.session_state.final_image is None and "editor_positions" in st.session_state:
+                positions = st.session_state.editor_positions
                 layout_pil_final = None
                 if layout_file:
                     layout_file.seek(0)
                     layout_pil_final = Image.open(layout_file).convert("RGB")
-
                 final = render_final_image(
                     resized_image,
-                    editor_result,
+                    positions,
                     info_text,
                     layout_pil_final
                 )
                 st.session_state.final_image = final
-                st.session_state.place_step = 4
-                st.rerun()
 
-        # =============================================
-        # STEP 4: 確定済み — 最終画像表示
-        # =============================================
-        elif step == 4:
-            st.subheader("🗺️ 完成マップ")
             if st.session_state.final_image:
                 st.image(st.session_state.final_image, use_container_width=True)
                 st.success("✅ 配置が確定されました。左パネルからダウンロードできます。")
@@ -380,4 +600,3 @@ with col_right:
             if key in st.session_state:
                 del st.session_state[key]
         st.session_state.place_step = 1
-
