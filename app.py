@@ -7,7 +7,6 @@ from streamlit_image_coordinates import streamlit_image_coordinates
 import io
 import base64
 import json
-import urllib.parse
 
 st.set_page_config(page_title="駐車場マップ作成ツール", layout="wide", page_icon="🅿️")
 
@@ -69,7 +68,6 @@ def draw_info_box(image, info_text, box_x, box_y, box_w, box_h, font_size=28):
     except:
         font = ImageFont.load_default()
 
-    # 半透明の白背景
     overlay = Image.new('RGBA', image.size, (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
     overlay_draw.rounded_rectangle(
@@ -78,7 +76,6 @@ def draw_info_box(image, info_text, box_x, box_y, box_w, box_h, font_size=28):
     )
     image = Image.alpha_composite(image.convert('RGBA'), overlay).convert('RGB')
 
-    # テキスト描画
     draw = ImageDraw.Draw(image)
     padding = 10
     lines = info_text.strip().split('\n')
@@ -110,12 +107,10 @@ def render_final_image(base_image, positions, info_text, layout_pil=None):
     """確定した配置で最終画像を生成"""
     result = base_image.copy()
 
-    # 配置図（最背面）
     if layout_pil and "layout-img" in positions:
         p = positions["layout-img"]
         result = overlay_layout_image(result, layout_pil, p["x"], p["y"], p["w"], p["h"])
 
-    # 建築現場ラベル
     if "site-label" in positions:
         p = positions["site-label"]
         cx = p["x"] + p["w"] // 2
@@ -123,7 +118,6 @@ def render_final_image(base_image, positions, info_text, layout_pil=None):
         font_size = max(16, min(48, int(p["h"] * 0.7)))
         result = draw_yellow_label(result, cx, cy, "建築現場", font_size=font_size)
 
-    # 駐車場ラベル
     if "parking-label" in positions:
         p = positions["parking-label"]
         cx = p["x"] + p["w"] // 2
@@ -131,7 +125,6 @@ def render_final_image(base_image, positions, info_text, layout_pil=None):
         font_size = max(16, min(48, int(p["h"] * 0.7)))
         result = draw_yellow_label(result, cx, cy, "駐車場", font_size=font_size)
 
-    # 情報欄
     if "info-box" in positions and info_text:
         p = positions["info-box"]
         font_size = max(14, min(32, int(p["h"] / max(1, info_text.count('\n') + 1) * 0.6)))
@@ -141,7 +134,7 @@ def render_final_image(base_image, positions, info_text, layout_pil=None):
 
 
 def build_drag_editor_html(bg_b64, overlays_json, img_height):
-    """ドラッグエディターのHTMLを生成（st.components.v1.html用）"""
+    """ドラッグエディターのHTMLを生成"""
     return f'''<!DOCTYPE html>
 <html>
 <head>
@@ -346,7 +339,6 @@ def build_drag_editor_html(bg_b64, overlays_json, img_height):
     window.parent.location.search = '?positions=' + encoded;
   }});
 
-  // Create overlays
   overlayData.forEach(function(ov) {{
     wrap.appendChild(createOverlayEl(ov));
   }});
@@ -368,8 +360,7 @@ if query_positions:
     try:
         decoded = base64.b64decode(query_positions).decode('utf-8')
         st.session_state.editor_positions = json.loads(decoded)
-        st.session_state.place_step = 4  # 確定済みへ
-        # クエリパラメータをクリア
+        st.session_state.place_step = 4
         st.query_params.clear()
     except Exception:
         st.query_params.clear()
@@ -383,9 +374,13 @@ if "parking_pos" not in st.session_state:
     st.session_state.parking_pos = None
 if "final_image" not in st.session_state:
     st.session_state.final_image = None
-
-uploaded_file = None
-layout_file = None
+# 画像データをsession_stateに保存（リロード対策）
+if "saved_image_bytes" not in st.session_state:
+    st.session_state.saved_image_bytes = None
+if "saved_layout_bytes" not in st.session_state:
+    st.session_state.saved_layout_bytes = None
+if "saved_info_text" not in st.session_state:
+    st.session_state.saved_info_text = ""
 
 # --- 左右2カラムに分割 ---
 col_left, col_right = st.columns([1, 2])
@@ -394,6 +389,16 @@ with col_left:
     st.subheader("⚙️ 設定")
     uploaded_file = st.file_uploader("Googleマップのスクショ", type=["png", "jpg", "jpeg"])
     layout_file = st.file_uploader("配置図（任意）", type=["png", "jpg", "jpeg"])
+
+    # アップロード時にsession_stateに保存
+    if uploaded_file:
+        uploaded_file.seek(0)
+        st.session_state.saved_image_bytes = uploaded_file.read()
+        uploaded_file.seek(0)
+    if layout_file:
+        layout_file.seek(0)
+        st.session_state.saved_layout_bytes = layout_file.read()
+        layout_file.seek(0)
 
     # --- ステップ表示 ---
     st.write("---")
@@ -443,24 +448,44 @@ with col_left:
         info_lines.append(f"徒歩{info_walk}（現場から駐車場まで）")
     info_text = '\n'.join(info_lines)
 
-    # --- 保存セクション ---
-    if uploaded_file and st.session_state.final_image is not None:
-        st.write("---")
-        st.subheader("📥 保存")
-        buf_dl = io.BytesIO()
-        st.session_state.final_image.save(buf_dl, format="PNG")
-        st.download_button(
-            "📥 駐車場マップをダウンロード",
-            buf_dl.getvalue(),
-            "駐車場マップ.png",
-            "image/png",
-            use_container_width=True
-        )
+    # 情報テキストもsession_stateに保存
+    if info_text:
+        st.session_state.saved_info_text = info_text
+
+
+# --- 画像を取得するヘルパー（file_uploaderまたはsession_stateから）---
+def get_base_image():
+    """アップロード済み画像をPILで取得"""
+    if uploaded_file:
+        return Image.open(uploaded_file).convert("RGB")
+    elif st.session_state.saved_image_bytes:
+        return Image.open(io.BytesIO(st.session_state.saved_image_bytes)).convert("RGB")
+    return None
+
+def get_layout_image():
+    """配置図画像をPILで取得"""
+    if layout_file:
+        return Image.open(layout_file).convert("RGB")
+    elif st.session_state.saved_layout_bytes:
+        return Image.open(io.BytesIO(st.session_state.saved_layout_bytes)).convert("RGB")
+    return None
+
+def get_info_text():
+    """情報テキストを取得"""
+    if info_text:
+        return info_text
+    return st.session_state.saved_info_text
+
 
 # --- 右パネル ---
 with col_right:
-    if uploaded_file:
-        image = Image.open(uploaded_file).convert("RGB")
+    has_image = uploaded_file or st.session_state.saved_image_bytes
+
+    if has_image:
+        image = get_base_image()
+        if image is None:
+            st.error("画像の読み込みに失敗しました。")
+            st.stop()
 
         base_width = 700
         w_percent = base_width / float(image.size[0])
@@ -514,6 +539,8 @@ with col_right:
             site_x, site_y = st.session_state.site_pos
             park_x, park_y = st.session_state.parking_pos
 
+            current_info = get_info_text()
+
             overlays = [
                 {
                     "id": "site-label",
@@ -535,19 +562,19 @@ with col_right:
                 },
             ]
 
-            if info_text:
+            if current_info:
                 overlays.append({
                     "id": "info-box",
                     "type": "info",
-                    "text": info_text,
+                    "text": current_info,
                     "x": 15,
                     "y": max(0, h_size - 145),
                     "w": 230,
                     "h": 130
                 })
 
-            if layout_file:
-                layout_pil = Image.open(layout_file).convert("RGB")
+            layout_pil = get_layout_image()
+            if layout_pil:
                 layout_b64 = pil_to_base64(layout_pil)
                 overlays.append({
                     "id": "layout-img",
@@ -569,17 +596,14 @@ with col_right:
         elif step == 4:
             st.subheader("🗺️ 完成マップ")
 
-            # 最終画像を生成（まだなければ）
             if st.session_state.final_image is None and "editor_positions" in st.session_state:
                 positions = st.session_state.editor_positions
-                layout_pil_final = None
-                if layout_file:
-                    layout_file.seek(0)
-                    layout_pil_final = Image.open(layout_file).convert("RGB")
+                layout_pil_final = get_layout_image()
+                current_info = get_info_text()
                 final = render_final_image(
                     resized_image,
                     positions,
-                    info_text,
+                    current_info,
                     layout_pil_final
                 )
                 st.session_state.final_image = final
@@ -587,6 +611,19 @@ with col_right:
             if st.session_state.final_image:
                 st.image(st.session_state.final_image, use_container_width=True)
                 st.success("✅ 配置が確定されました。左パネルからダウンロードできます。")
+
+                # ダウンロードボタンを右パネルにも表示
+                buf_dl = io.BytesIO()
+                st.session_state.final_image.save(buf_dl, format="PNG")
+                st.download_button(
+                    "📥 駐車場マップをダウンロード",
+                    buf_dl.getvalue(),
+                    "駐車場マップ.png",
+                    "image/png",
+                    use_container_width=True
+                )
+            else:
+                st.warning("画像の生成に失敗しました。「ラベル配置をやり直す」を押してやり直してください。")
 
             if st.button("🔧 配置を再調整する"):
                 st.session_state.place_step = 3
@@ -596,7 +633,9 @@ with col_right:
     else:
         st.subheader("🗺️ 地図プレビュー")
         st.info("👆 左の操作パネルからGoogleマップのスクショをアップロードしてください。")
-        for key in ["result_image", "last_click_id", "site_pos", "parking_pos", "final_image", "editor_positions"]:
+        for key in ["result_image", "last_click_id", "site_pos", "parking_pos",
+                     "final_image", "editor_positions", "saved_image_bytes",
+                     "saved_layout_bytes", "saved_info_text"]:
             if key in st.session_state:
                 del st.session_state[key]
         st.session_state.place_step = 1
