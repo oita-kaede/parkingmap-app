@@ -606,7 +606,7 @@ with col_left:
     info_period = st.text_input("期間", placeholder="例：2/1～6/30まで")
     info_cars = st.text_input("台数", placeholder="例：二台")
     info_number = st.text_input("番号", placeholder="例：1.2")
-    info_note = st.text_area("注意事項", placeholder="例：大型不可（軽トラも）", height=80)
+    info_note = st.text_area("注意事項", value="現場からのお知らせに駐車場の位置マップ記載しております。", height=80)
     info_walk = st.text_input("徒歩分数", placeholder="例：5分")
 
     info_lines = []
